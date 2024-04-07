@@ -7,7 +7,7 @@ license = "MIT-0"
 [workspace]
 members = [
     "node",
-    "pallets/template",
+	"pallets/spontra",
     "runtime",
 ]
 resolver = "2"
