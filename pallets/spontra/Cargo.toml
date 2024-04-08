@@ -24,6 +24,7 @@ scale-info = { version = "2.10.0", default-features = false, features = [
 sp-runtime = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", default-features = false }
 sp-core = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", default-features = false }
 sp-io = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", default-features = false }
+sp-std = { git = "https://github.com/paritytech/polkadot-sdk.git", tag = "polkadot-v1.9.0", default-features = false }
 hex = { version = "0.4", default-features = false }
 hex-literal = { version = "0.4", default-features = false }
 
@@ -45,6 +46,7 @@ std = [
 	"sp-io/std",
 	"sp-runtime/std",
 	"pallet-transaction-payment/std",
+	"sp-std/std",
 ]
 runtime-benchmarks = [
 	"frame-benchmarking/runtime-benchmarks",

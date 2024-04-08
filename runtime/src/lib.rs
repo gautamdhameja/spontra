@@ -35,9 +35,9 @@ pub use frame_support::{
 };
 pub use frame_system::Call as SystemCall;
 pub use pallet_balances::Call as BalancesCall;
+use pallet_spontra::payment::SponsoredCurrencyAdapter;
 pub use pallet_timestamp::Call as TimestampCall;
 use pallet_transaction_payment::{ConstFeeMultiplier, Multiplier};
-use pallet_spontra::payment::SponsoredCurrencyAdapter;
 
 #[cfg(any(feature = "std", test))]
 pub use sp_runtime::BuildStorage;
@@ -250,6 +250,7 @@ impl pallet_sudo::Config for Runtime {
 /// Configure the pallet-template in pallets/template.
 impl pallet_spontra::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
+	type MaxNameLen = ConstU32<256>;
 }
 
 // Create the runtime by composing the FRAME pallets that were previously configured.

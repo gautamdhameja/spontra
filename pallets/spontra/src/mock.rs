@@ -1,9 +1,9 @@
-use crate as pallet_template;
+use crate as pallet_spontra;
 use frame_support::{
 	derive_impl,
 	traits::{ConstU16, ConstU64},
 };
-use sp_core::H256;
+use sp_core::{ConstU32, H256};
 use sp_runtime::{
 	traits::{BlakeTwo256, IdentityLookup},
 	BuildStorage,
@@ -16,7 +16,7 @@ frame_support::construct_runtime!(
 	pub enum Test
 	{
 		System: frame_system,
-		TemplateModule: pallet_template,
+		Spontra: pallet_spontra,
 	}
 );
 
@@ -47,8 +47,9 @@ impl frame_system::Config for Test {
 	type MaxConsumers = frame_support::traits::ConstU32<16>;
 }
 
-impl pallet_template::Config for Test {
+impl pallet_spontra::Config for Test {
 	type RuntimeEvent = RuntimeEvent;
+	type MaxNameLen = ConstU32<256>;
 }
 
 // Build genesis storage according to the mock runtime.

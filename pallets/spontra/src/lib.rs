@@ -5,6 +5,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
 pub use pallet::*;
+use sp_runtime::{traits::StaticLookup, BoundedVec};
 
 pub mod payment;
 
@@ -16,6 +17,14 @@ mod tests;
 
 #[cfg(feature = "runtime-benchmarks")]
 mod benchmarking;
+
+type AccountIdLookupOf<T> = <<T as frame_system::Config>::Lookup as StaticLookup>::Source;
+
+pub type PalletNameOf<T> = BoundedVec<u8, <T as Config>::MaxNameLen>;
+
+pub type PalletCallNameOf<T> = BoundedVec<u8, <T as Config>::MaxNameLen>;
+
+pub type RuntimeCallNameOf<T> = (PalletNameOf<T>, PalletCallNameOf<T>);
 
 #[frame_support::pallet(dev_mode)]
 pub mod pallet {
@@ -31,21 +40,35 @@ pub mod pallet {
 	pub trait Config: frame_system::Config {
 		/// The overarching runtime event type.
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
+
+		#[pallet::constant]
+		type MaxNameLen: Get<u32>;
 	}
 
 	#[pallet::storage]
-	pub type Something<T> = StorageValue<_, u32>;
+	pub(super) type PayerKey<T: Config> = StorageValue<_, T::AccountId, OptionQuery>;
+
+	#[pallet::storage]
+	pub type SponsoredCalls<T: Config> =
+		StorageMap<_, Blake2_128Concat, RuntimeCallNameOf<T>, (), OptionQuery>;
 
 	/// Events that functions in this pallet can emit.
 	#[pallet::event]
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
 	pub enum Event<T: Config> {
-		/// A user has successfully set a new value.
-		SomethingStored {
-			/// The new value set.
-			something: u32,
-			/// The account who set the new value.
-			who: T::AccountId,
+		PayerKeyUpdated {
+			/// The old sudo key (if one was previously set).
+			old: Option<T::AccountId>,
+			/// The new sudo key (if one was set).
+			new: T::AccountId,
+		},
+
+		CallSponsored {
+			full_name: RuntimeCallNameOf<T>,
+		},
+
+		CallUnsponsored {
+			full_name: RuntimeCallNameOf<T>,
 		},
 	}
 
@@ -58,23 +81,52 @@ pub mod pallet {
 		StorageOverflow,
 	}
 
-	/// The pallet's dispatchable functions ([`Call`]s).
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
 		#[pallet::call_index(0)]
 		#[pallet::weight(0)]
-		pub fn do_something(origin: OriginFor<T>, something: u32) -> DispatchResult {
-			// Check that the extrinsic was signed and get the signer.
-			let who = ensure_signed(origin)?;
+		pub fn set_payer_key(
+			origin: OriginFor<T>,
+			payer: AccountIdLookupOf<T>,
+		) -> DispatchResultWithPostInfo {
+			ensure_root(origin)?;
 
-			// Update storage.
-			Something::<T>::put(something);
+			let new = T::Lookup::lookup(payer)?;
+			Self::deposit_event(Event::PayerKeyUpdated {
+				old: PayerKey::<T>::get(),
+				new: new.clone(),
+			});
+			PayerKey::<T>::put(new);
 
-			// Emit an event.
-			Self::deposit_event(Event::SomethingStored { something, who });
+			Ok(Pays::No.into())
+		}
 
-			// Return a successful `DispatchResult`
-			Ok(())
+		#[pallet::call_index(1)]
+		#[pallet::weight(0)]
+		pub fn sponsor_call(
+			origin: OriginFor<T>,
+			full_name: RuntimeCallNameOf<T>,
+		) -> DispatchResultWithPostInfo {
+			ensure_root(origin)?;
+
+			SponsoredCalls::<T>::insert(&full_name, ());
+			Self::deposit_event(Event::CallSponsored { full_name });
+
+			Ok(Pays::No.into())
+		}
+
+		#[pallet::call_index(2)]
+		#[pallet::weight(0)]
+		pub fn unsponsor_call(
+			origin: OriginFor<T>,
+			full_name: RuntimeCallNameOf<T>,
+		) -> DispatchResultWithPostInfo {
+			ensure_root(origin)?;
+
+			SponsoredCalls::<T>::remove(&full_name);
+			Self::deposit_event(Event::CallUnsponsored { full_name });
+
+			Ok(Pays::No.into())
 		}
 	}
 }

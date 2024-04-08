@@ -1,92 +1,44 @@
-use pallet_transaction_payment::Config;
-use pallet_transaction_payment::OnChargeTransaction;
-use sp_runtime::AccountId32;
+use crate::Config;
 use core::marker::PhantomData;
-use codec::Decode;
-
-use hex_literal::hex;
+use frame_support::traits::{CallMetadata, GetCallMetadata};
+use pallet_transaction_payment::{Config as TxPyConfig, OnChargeTransaction};
+use sp_std::prelude::*;
 
 use sp_runtime::{
-	traits::{DispatchInfoOf, PostDispatchInfoOf, Saturating, Zero},
+	traits::{DispatchInfoOf, PostDispatchInfoOf, Zero},
 	transaction_validity::InvalidTransaction,
 };
 
 use frame_support::{
-	traits::{Currency, ExistenceRequirement, WithdrawReasons,
-		Imbalance, OnUnbalanced,},
+	traits::{Currency, ExistenceRequirement, Imbalance, OnUnbalanced, WithdrawReasons},
 	unsigned::TransactionValidityError,
 };
 
-// pub struct SponsoredFungibleAdapter<F, OU>(PhantomData<(F, OU)>);
+pub struct PayerFinder<T>(PhantomData<T>);
 
-// impl<T, F, OU> OnChargeTransaction<T> for SponsoredFungibleAdapter<F, OU>
-// where
-// 	T: Config,
-// 	F: Balanced<T::AccountId>,
-// 	OU: OnUnbalanced<Credit<T::AccountId, F>>,
-// {
-// 	type LiquidityInfo = Option<Credit<T::AccountId, F>>;
-// 	type Balance = <F as Inspect<<T as frame_system::Config>::AccountId>>::Balance;
+impl<T: Config> PayerFinder<T>
+where
+	<T as frame_system::Config>::RuntimeCall: GetCallMetadata,
+{
+	pub(crate) fn get_payer_account() -> Option<T::AccountId> {
+		<crate::PayerKey<T>>::get()
+	}
 
-// 	fn withdraw_fee(
-// 		_who: &<T>::AccountId,
-// 		_call: &<T>::RuntimeCall,
-// 		_dispatch_info: &DispatchInfoOf<<T>::RuntimeCall>,
-// 		fee: Self::Balance,
-// 		_tip: Self::Balance,
-// 	) -> Result<Self::LiquidityInfo, TransactionValidityError> {
-// 		if fee.is_zero() {
-// 			return Ok(None)
-// 		}
+	pub(crate) fn is_call_sponsored(call: &T::RuntimeCall) -> bool {
+		let CallMetadata { pallet_name, function_name } = call.get_call_metadata();
+		Self::is_sponsored_unbound(pallet_name.into(), function_name.into())
+	}
 
-// 		let account32: AccountId32 = hex!["d43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d"].into();
-// 		let mut init_account32 = AccountId32::as_ref(&account32);
-// 		let payer: <T>::AccountId = <T as frame_system::Config>::AccountId::decode(&mut init_account32).unwrap();
+	fn is_sponsored_unbound(pallet: Vec<u8>, call: Vec<u8>) -> bool {
+		let pallet = crate::PalletNameOf::<T>::try_from(pallet);
+		let call = crate::PalletCallNameOf::<T>::try_from(call);
 
-// 		match F::withdraw(
-// 			&payer,
-// 			fee,
-// 			Precision::Exact,
-// 			frame_support::traits::tokens::Preservation::Preserve,
-// 			frame_support::traits::tokens::Fortitude::Polite,
-// 		) {
-// 			Ok(imbalance) => Ok(Some(imbalance)),
-// 			Err(_) => Err(InvalidTransaction::Payment.into()),
-// 		}
-// 	}
-
-// 	fn correct_and_deposit_fee(
-// 		who: &<T>::AccountId,
-// 		_dispatch_info: &DispatchInfoOf<<T>::RuntimeCall>,
-// 		_post_info: &PostDispatchInfoOf<<T>::RuntimeCall>,
-// 		corrected_fee: Self::Balance,
-// 		tip: Self::Balance,
-// 		already_withdrawn: Self::LiquidityInfo,
-// 	) -> Result<(), TransactionValidityError> {
-// 		if let Some(paid) = already_withdrawn {
-// 			// Calculate how much refund we should return
-// 			let refund_amount = paid.peek().saturating_sub(corrected_fee);
-// 			// refund to the the account that paid the fees if it exists. otherwise, don't refind
-// 			// anything.
-// 			let refund_imbalance = if F::total_balance(who) > F::Balance::zero() {
-// 				F::deposit(who, refund_amount, Precision::BestEffort)
-// 					.unwrap_or_else(|_| Debt::<T::AccountId, F>::zero())
-// 			} else {
-// 				Debt::<T::AccountId, F>::zero()
-// 			};
-// 			// merge the imbalance caused by paying the fees and refunding parts of it again.
-// 			let adjusted_paid: Credit<T::AccountId, F> = paid
-// 				.offset(refund_imbalance)
-// 				.same()
-// 				.map_err(|_| TransactionValidityError::Invalid(InvalidTransaction::Payment))?;
-// 			// Call someone else to handle the imbalance (fee and tip separately)
-// 			let (tip, fee) = adjusted_paid.split(tip);
-// 			OU::on_unbalanceds(Some(fee).into_iter().chain(Some(tip)));
-// 		}
-
-// 		Ok(())
-// 	}
-// }
+		match (pallet, call) {
+			(Ok(pallet), Ok(call)) => crate::SponsoredCalls::<T>::contains_key(&(pallet, call)),
+			_ => true,
+		}
+	}
+}
 
 type NegativeImbalanceOf<C, T> =
 	<C as Currency<<T as frame_system::Config>::AccountId>>::NegativeImbalance;
@@ -100,6 +52,7 @@ pub struct SponsoredCurrencyAdapter<C, OU>(PhantomData<(C, OU)>);
 #[allow(deprecated)]
 impl<T, C, OU> OnChargeTransaction<T> for SponsoredCurrencyAdapter<C, OU>
 where
+	T: TxPyConfig,
 	T: Config,
 	C: Currency<<T as frame_system::Config>::AccountId>,
 	C::PositiveImbalance: Imbalance<
@@ -111,6 +64,7 @@ where
 		Opposite = C::PositiveImbalance,
 	>,
 	OU: OnUnbalanced<NegativeImbalanceOf<C, T>>,
+	<T as frame_system::Config>::RuntimeCall: GetCallMetadata,
 {
 	type LiquidityInfo = Option<NegativeImbalanceOf<C, T>>;
 	type Balance = <C as Currency<<T as frame_system::Config>::AccountId>>::Balance;
@@ -119,8 +73,8 @@ where
 	///
 	/// Note: The `fee` already includes the `tip`.
 	fn withdraw_fee(
-		_who: &T::AccountId,
-		_call: &T::RuntimeCall,
+		who: &T::AccountId,
+		call: &T::RuntimeCall,
 		_info: &DispatchInfoOf<T::RuntimeCall>,
 		fee: Self::Balance,
 		tip: Self::Balance,
@@ -135,13 +89,21 @@ where
 			WithdrawReasons::TRANSACTION_PAYMENT | WithdrawReasons::TIP
 		};
 
-		let account32: AccountId32 = hex!["d43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d"].into();
-		let mut init_account32 = AccountId32::as_ref(&account32);
-		let payer: <T>::AccountId = <T as frame_system::Config>::AccountId::decode(&mut init_account32).unwrap();
-
-		match C::withdraw(&payer, fee, withdraw_reason, ExistenceRequirement::KeepAlive) {
-			Ok(imbalance) => Ok(Some(imbalance)),
-			Err(_) => Err(InvalidTransaction::Payment.into()),
+		if PayerFinder::<T>::is_call_sponsored(call) {
+			if let Some(payer) = PayerFinder::<T>::get_payer_account() {
+				match C::withdraw(&payer, fee, withdraw_reason, ExistenceRequirement::KeepAlive) {
+					Ok(imbalance) => Ok(Some(imbalance)),
+					Err(_) => Err(InvalidTransaction::Payment.into()),
+				}
+			} else {
+				Err(InvalidTransaction::Payment.into())
+			}
+		} else {
+			// Fall back to sender as payer.
+			match C::withdraw(&who, fee, withdraw_reason, ExistenceRequirement::KeepAlive) {
+				Ok(imbalance) => Ok(Some(imbalance)),
+				Err(_) => Err(InvalidTransaction::Payment.into()),
+			}
 		}
 	}
 
@@ -154,32 +116,28 @@ where
 		_who: &T::AccountId,
 		_dispatch_info: &DispatchInfoOf<T::RuntimeCall>,
 		_post_info: &PostDispatchInfoOf<T::RuntimeCall>,
-		corrected_fee: Self::Balance,
-		tip: Self::Balance,
-		already_withdrawn: Self::LiquidityInfo,
+		_corrected_fee: Self::Balance,
+		_tip: Self::Balance,
+		_already_withdrawn: Self::LiquidityInfo,
 	) -> Result<(), TransactionValidityError> {
-		if let Some(paid) = already_withdrawn {
-			// Calculate how much refund we should return
-			let refund_amount = paid.peek().saturating_sub(corrected_fee);
-			// refund to the the account that paid the fees. If this fails, the
-			// account might have dropped below the existential balance. In
-			// that case we don't refund anything.
+		// if let Some(paid) = already_withdrawn {
+		// 	// Calculate how much refund we should return
+		// 	let refund_amount = paid.peek().saturating_sub(corrected_fee);
+		// 	// refund to the the account that paid the fees. If this fails, the
+		// 	// account might have dropped below the existential balance. In
+		// 	// that case we don't refund anything.
 
-			let account32: AccountId32 = hex!["d43593c715fdd31c61141abd04a99fd6822c8558854ccde39a5684e7a56da27d"].into();
-			let mut init_account32 = AccountId32::as_ref(&account32);
-			let payer: <T>::AccountId = <T as frame_system::Config>::AccountId::decode(&mut init_account32).unwrap();
-
-			let refund_imbalance = C::deposit_into_existing(&payer, refund_amount)
-				.unwrap_or_else(|_| C::PositiveImbalance::zero());
-			// merge the imbalance caused by paying the fees and refunding parts of it again.
-			let adjusted_paid = paid
-				.offset(refund_imbalance)
-				.same()
-				.map_err(|_| TransactionValidityError::Invalid(InvalidTransaction::Payment))?;
-			// Call someone else to handle the imbalance (fee and tip separately)
-			let (tip, fee) = adjusted_paid.split(tip);
-			OU::on_unbalanceds(Some(fee).into_iter().chain(Some(tip)));
-		}
+		// 	let refund_imbalance = C::deposit_into_existing(&who, refund_amount)
+		// 		.unwrap_or_else(|_| C::PositiveImbalance::zero());
+		// 	// merge the imbalance caused by paying the fees and refunding parts of it again.
+		// 	let adjusted_paid = paid
+		// 		.offset(refund_imbalance)
+		// 		.same()
+		// 		.map_err(|_| TransactionValidityError::Invalid(InvalidTransaction::Payment))?;
+		// 	// Call someone else to handle the imbalance (fee and tip separately)
+		// 	let (tip, fee) = adjusted_paid.split(tip);
+		// 	OU::on_unbalanceds(Some(fee).into_iter().chain(Some(tip)));
+		// }
 		Ok(())
 	}
 }
